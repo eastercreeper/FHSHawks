@@ -1,0 +1,359 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>FHS Hawks — Admin Panel</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<header class="topbar">
+  <a class="brand" href="index.html">FHS HAWKS</a>
+  <a class="button secondary" href="index.html">Public View</a>
+</header>
+
+<main class="container">
+  <section class="page-heading">
+    <p class="eyebrow">FHS HAWKS</p>
+    <h1>Roster Admin</h1>
+    <p>Manage FHS Hawks players and lineups.</p>
+  </section>
+
+  <section id="login-panel" class="panel">
+    <h2>Administrator Login</h2>
+    <form id="login-form" class="form-stack">
+      <label for="email">Email</label>
+      <input id="email" type="email" autocomplete="username" required>
+
+      <label for="password">Password</label>
+      <input id="password" type="password"
+             autocomplete="current-password" required>
+
+      <button type="submit">Sign In</button>
+    </form>
+  </section>
+
+  <section id="admin-panel" hidden>
+    <div class="panel section-heading">
+      <div>
+        <h2>Roster Editor</h2>
+        <p id="signed-in-user" class="muted"></p>
+      </div>
+      <button id="logout-button" class="secondary" type="button">
+        Sign Out
+      </button>
+    </div>
+
+    <section class="panel">
+      <h2>Add a Player</h2>
+      <form id="add-player-form" class="form-stack">
+        <label for="new-number">Player Number</label>
+        <input id="new-number" type="number" min="0" step="1" required>
+
+        <label for="new-name">Player Name</label>
+        <input id="new-name" type="text" maxlength="100" required>
+
+        <button type="submit">Add Player</button>
+      </form>
+    </section>
+
+    <section class="panel">
+      <div class="section-heading">
+        <h2>Edit Players</h2>
+        <button id="reload-players" class="secondary" type="button">
+          Refresh
+        </button>
+      </div>
+      <div id="admin-players" class="editor-list"></div>
+    </section>
+
+    <section class="panel">
+      <h2>Create a Lineup</h2>
+      <form id="create-lineup-form" class="form-stack">
+        <label for="lineup-name">Lineup Name</label>
+        <input id="lineup-name" type="text" maxlength="100" required>
+        <button type="submit">Create Lineup</button>
+      </form>
+    </section>
+
+    <section class="panel">
+      <h2>Edit a Lineup</h2>
+      <label for="edit-lineup-select">Choose lineup</label>
+      <select id="edit-lineup-select">
+        <option value="">Select a lineup</option>
+      </select>
+
+      <div id="lineup-editor" class="form-stack"></div>
+
+      <button id="save-lineup" type="button">
+        Save Lineup Players
+      </button>
+    </section>
+  </section>
+
+  <p id="admin-status" class="status" role="status"></p>
+</main>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="app.js"></script>
+<script>
+  const loginPanel = document.getElementById("login-panel");
+  const adminPanel = document.getElementById("admin-panel");
+  const loginForm = document.getElementById("login-form");
+  const statusBox = document.getElementById("admin-status");
+  const adminPlayers = document.getElementById("admin-players");
+  const editLineupSelect = document.getElementById("edit-lineup-select");
+  const lineupEditor = document.getElementById("lineup-editor");
+
+  let currentLineupId = null;
+  let cachedPlayers = [];
+
+  function status(message) {
+    statusBox.textContent = message;
+  }
+
+  async function checkAccess() {
+    const user = await getCurrentUser();
+
+    if (!user) {
+      loginPanel.hidden = false;
+      adminPanel.hidden = true;
+      return false;
+    }
+
+    if (!(await isAdmin())) {
+      await db.auth.signOut();
+      loginPanel.hidden = false;
+      adminPanel.hidden = true;
+      status("This account is not authorized to administer the roster.");
+      return false;
+    }
+
+    loginPanel.hidden = true;
+    adminPanel.hidden = false;
+    document.getElementById("signed-in-user").textContent = user.email;
+
+    await refreshAdminData();
+    return true;
+  }
+
+  loginForm.addEventListener("submit", async event => {
+    event.preventDefault();
+    status("Signing in...");
+
+    try {
+      await signIn(
+              document.getElementById("email").value.trim(),
+              document.getElementById("password").value
+      );
+
+      if (await checkAccess()) {
+        status("Signed in successfully.");
+      }
+    } catch (error) {
+      status(error.message || "Login failed.");
+    }
+  });
+
+  document.getElementById("logout-button")
+          .addEventListener("click", async () => {
+            try {
+              await signOut();
+            } catch (error) {
+              status(error.message);
+            }
+          });
+
+  async function refreshAdminData() {
+    cachedPlayers = await loadPlayers();
+    adminPlayers.replaceChildren();
+
+    for (const player of cachedPlayers) {
+      const form = document.createElement("form");
+      form.className = "player-editor";
+
+      const number = document.createElement("input");
+      number.type = "number";
+      number.min = "0";
+      number.step = "1";
+      number.value = player.player_number;
+      number.required = true;
+      number.setAttribute("aria-label", "Player number");
+
+      const name = document.createElement("input");
+      name.type = "text";
+      name.maxLength = 100;
+      name.value = player.player_name;
+      name.required = true;
+      name.setAttribute("aria-label", "Player name");
+
+      const save = document.createElement("button");
+      save.type = "submit";
+      save.textContent = "Save";
+
+      const remove = document.createElement("button");
+      remove.type = "button";
+      remove.textContent = "Delete";
+      remove.className = "danger";
+
+      form.append(number, name, save, remove);
+
+      form.addEventListener("submit", async event => {
+        event.preventDefault();
+
+        try {
+          await savePlayer({
+            id: player.id,
+            player_number: number.value,
+            player_name: name.value
+          });
+
+          status("Player saved.");
+          await refreshAdminData();
+        } catch (error) {
+          status(error.message);
+        }
+      });
+
+      remove.addEventListener("click", async () => {
+        if (!confirm(`Delete ${player.player_name}?`)) return;
+
+        try {
+          await deletePlayer(player.id);
+          status("Player deleted.");
+          await refreshAdminData();
+        } catch (error) {
+          status(error.message);
+        }
+      });
+
+      adminPlayers.appendChild(form);
+    }
+
+    const lineups = await loadLineups();
+    const previousId = editLineupSelect.value;
+
+    editLineupSelect.replaceChildren(
+            new Option("Select a lineup", "")
+    );
+
+    for (const lineup of lineups) {
+      editLineupSelect.add(new Option(lineup.name, lineup.id));
+    }
+
+    if (lineups.some(item => String(item.id) === previousId)) {
+      editLineupSelect.value = previousId;
+    }
+
+    await renderLineupEditor();
+  }
+
+  document.getElementById("add-player-form")
+          .addEventListener("submit", async event => {
+            event.preventDefault();
+
+            try {
+              await savePlayer({
+                player_number: document.getElementById("new-number").value,
+                player_name: document.getElementById("new-name").value
+              });
+
+              event.target.reset();
+              status("Player added.");
+              await refreshAdminData();
+            } catch (error) {
+              status(error.message);
+            }
+          });
+
+  document.getElementById("reload-players")
+          .addEventListener("click", async () => {
+            try {
+              await refreshAdminData();
+              status("Roster refreshed.");
+            } catch (error) {
+              status(error.message);
+            }
+          });
+
+  document.getElementById("create-lineup-form")
+          .addEventListener("submit", async event => {
+            event.preventDefault();
+
+            try {
+              const lineup = await createLineup(
+                      document.getElementById("lineup-name").value
+              );
+
+              event.target.reset();
+              status(`Created lineup: ${lineup.name}`);
+              await refreshAdminData();
+              editLineupSelect.value = String(lineup.id);
+              await renderLineupEditor();
+            } catch (error) {
+              status(error.message);
+            }
+          });
+
+  editLineupSelect.addEventListener("change", renderLineupEditor);
+
+  async function renderLineupEditor() {
+    currentLineupId = editLineupSelect.value || null;
+    lineupEditor.replaceChildren();
+
+    if (!currentLineupId) {
+      lineupEditor.textContent = "Choose a lineup to edit its players.";
+      return;
+    }
+
+    try {
+      const selected = await loadLineupPlayers(currentLineupId);
+      const selectedIds = new Set(selected.map(p => p.id));
+
+      for (const player of cachedPlayers) {
+        const label = document.createElement("label");
+        label.className = "checkbox-row";
+
+        const checkbox = document.createElement("input");
+        checkbox.type = "checkbox";
+        checkbox.value = player.id;
+        checkbox.checked = selectedIds.has(player.id);
+
+        const text = document.createElement("span");
+        text.textContent =
+                `#${player.player_number} — ${player.player_name}`;
+
+        label.append(checkbox, text);
+        lineupEditor.appendChild(label);
+      }
+    } catch (error) {
+      status(error.message);
+    }
+  }
+
+  document.getElementById("save-lineup")
+          .addEventListener("click", async () => {
+            if (!currentLineupId) {
+              status("Choose a lineup first.");
+              return;
+            }
+
+            try {
+              const ids = [...lineupEditor.querySelectorAll(
+                      'input[type="checkbox"]:checked'
+              )].map(input => Number(input.value));
+
+              await saveLineupPlayers(currentLineupId, ids);
+              status("Lineup saved.");
+            } catch (error) {
+              status(error.message);
+            }
+          });
+
+  checkAccess().catch(error => {
+    status("Could not initialize the admin panel: " + error.message);
+  });
+</script>
+</body>
+</html>

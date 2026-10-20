@@ -1,0 +1,153 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>FHS Hawks — Player Roster</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<header class="topbar">
+    <a class="brand" href="index.html">FHS HAWKS</a>
+    <a class="button secondary" href="admin.html">Admin Login</a>
+</header>
+
+<main class="container">
+    <section class="page-heading">
+        <p class="eyebrow">FHS HAWKS</p>
+        <h1>Player Roster</h1>
+        <p>Official FHS Hawks roster and saved lineups.</p>
+    </section>
+
+    <section class="panel">
+        <div class="section-heading">
+            <h2>Players</h2>
+            <span id="player-count" class="muted">Loading...</span>
+        </div>
+
+        <div class="table-wrap">
+            <table>
+                <thead>
+                <tr>
+                    <th>Number</th>
+                    <th>Player</th>
+                </tr>
+                </thead>
+                <tbody id="players-body">
+                <tr><td colspan="2">Loading players...</td></tr>
+                </tbody>
+            </table>
+        </div>
+    </section>
+
+    <section class="panel">
+        <h2>Saved Lineups</h2>
+        <label for="lineup-select">Choose a lineup</label>
+        <select id="lineup-select">
+            <option value="">Select a lineup</option>
+        </select>
+
+        <div id="lineup-output" class="lineup-output">
+            Select a lineup to view its players.
+        </div>
+    </section>
+
+    <p id="status" class="status" role="status"></p>
+</main>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="app.js"></script>
+<script>
+    const playersBody = document.getElementById("players-body");
+    const playerCount = document.getElementById("player-count");
+    const lineupSelect = document.getElementById("lineup-select");
+    const lineupOutput = document.getElementById("lineup-output");
+    const statusBox = document.getElementById("status");
+
+    function showStatus(message) {
+        statusBox.textContent = message;
+    }
+
+    async function refreshPlayers() {
+        const players = await loadPlayers();
+
+        playersBody.replaceChildren();
+        playerCount.textContent = `${players.length} players`;
+
+        if (players.length === 0) {
+            playersBody.innerHTML =
+                '<tr><td colspan="2">No players have been added yet.</td></tr>';
+            return;
+        }
+
+        for (const player of players) {
+            const tr = document.createElement("tr");
+            const number = document.createElement("td");
+            const name = document.createElement("td");
+
+            number.textContent = player.player_number;
+            name.textContent = player.player_name;
+
+            tr.append(number, name);
+            playersBody.appendChild(tr);
+        }
+    }
+
+    async function refreshLineups() {
+        const lineups = await loadLineups();
+
+        lineupSelect.replaceChildren(new Option("Select a lineup", ""));
+
+        for (const lineup of lineups) {
+            lineupSelect.add(new Option(lineup.name, lineup.id));
+        }
+    }
+
+    lineupSelect.addEventListener("change", async () => {
+        lineupOutput.textContent = "Loading lineup...";
+
+        if (!lineupSelect.value) {
+            lineupOutput.textContent = "Select a lineup to view its players.";
+            return;
+        }
+
+        try {
+            const players = await loadLineupPlayers(lineupSelect.value);
+            lineupOutput.replaceChildren();
+
+            if (players.length === 0) {
+                lineupOutput.textContent = "This lineup has no players yet.";
+                return;
+            }
+
+            const list = document.createElement("ol");
+
+            for (const player of players.sort(
+                (a, b) => a.player_number - b.player_number
+            )) {
+                const item = document.createElement("li");
+                item.textContent =
+                    `#${player.player_number} — ${player.player_name}`;
+                list.appendChild(item);
+            }
+
+            lineupOutput.appendChild(list);
+        } catch (error) {
+            lineupOutput.textContent = "Could not load this lineup.";
+        }
+    });
+
+    async function init() {
+        try {
+            await Promise.all([refreshPlayers(), refreshLineups()]);
+        } catch (error) {
+            showStatus("Unable to load the roster. Check your database setup.");
+            console.error(error);
+        }
+    }
+
+    init();
+</script>
+</body>
+</html>
